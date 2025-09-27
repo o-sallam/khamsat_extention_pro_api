@@ -31,9 +31,17 @@ module.exports = async (req, res) => {
     if (commentsHeader.length === 0) {
       return res.status(404).json({ error: 'Comments section not found' });
     }
+    // Try to find the closest parent that contains the header and all comments (usually .comments or .card or .box or .comments-list)
+    let commentsBlock = commentsHeader.closest('.comments, .card, .box, .comments-list');
+    if (!commentsBlock.length) {
+      // fallback: get the direct parent
+      commentsBlock = commentsHeader.parent();
+    }
     res.status(200).json({
-      html: commentsHeader.html(),
-      outer: $.html(commentsHeader)
+      html: commentsBlock.html(),
+      outer: $.html(commentsBlock),
+      header: commentsHeader.html(),
+      headerOuter: $.html(commentsHeader)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
