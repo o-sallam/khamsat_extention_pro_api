@@ -12,10 +12,15 @@ module.exports = async (req, res) => {
     if (matches && matches[1]) param = matches[1];
   }
   if (!param) {
-    res.status(400).json({ error: 'Missing param' });
-    return;
+    return res.status(400).json({ error: 'Missing param' });
   }
-  const targetUrl = `https://khamsat.com/community/requests/${param}`;
+  // Handle Arabic and URL encoding
+  try {
+    param = decodeURIComponent(param);
+  } catch (e) {
+    // ignore, use as is
+  }
+  const targetUrl = `https://khamsat.com/community/requests/${encodeURIComponent(param)}`;
   try {
     const response = await axios.get(targetUrl, {
       headers: {
@@ -27,23 +32,34 @@ module.exports = async (req, res) => {
     // Find the comments section header
     const commentsHeader = $('div.card-header.bg-white h3').filter(function() {
       return $(this).text().trim().startsWith('التعليقات');
-    }).parent();
-    if (commentsHeader.length === 0) {
+    });
+    let commentsCount = null;
+    if (commentsHeader.length > 0) {
+      // Extract number from: التعليقات (7)
+      const text = commentsHeader.text();
+      const match = text.match(/التعليقات\s*\((\d+)\)/);
+      if (match && match[1]) {
+        commentsCount = parseInt(match[1], 10);
+      }
+    }
+    const commentsHeaderDiv = commentsHeader.parent();
+    if (commentsHeaderDiv.length === 0) {
       return res.status(404).json({ error: 'Comments section not found' });
     }
     // Try to find the closest parent that contains the header and all comments (usually .comments or .card or .box or .comments-list)
-    let commentsBlock = commentsHeader.closest('.comments, .card, .box, .comments-list');
+    let commentsBlock = commentsHeaderDiv.closest('.comments, .card, .box, .comments-list');
     if (!commentsBlock.length) {
       // fallback: get the direct parent
-      commentsBlock = commentsHeader.parent();
+      commentsBlock = commentsHeaderDiv.parent();
     }
     res.status(200).json({
+      commentsCount,
       html: commentsBlock.html(),
       outer: $.html(commentsBlock),
-      header: commentsHeader.html(),
-      headerOuter: $.html(commentsHeader)
+      header: commentsHeaderDiv.html(),
+      headerOuter: $.html(commentsHeaderDiv)
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to fetch or parse comments', details: err.message });
   }
 };
