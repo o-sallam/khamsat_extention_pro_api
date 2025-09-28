@@ -77,34 +77,18 @@ module.exports = async (req, res) => {
     }).first();
 
     if (headerEl.length === 0) {
-      // Not found — return debug info so you can inspect the HTML preview
-      return res.status(200).json({
-        note: 'Comments header not found in fetched HTML',
-        attempt,
-        status: fetched.status,
-        htmlPreview,
-        // optionally return some candidate headings to inspect
-        candidateTexts: $('h3').map((i, el) => $(el).text().trim()).get().slice(0, 20)
-      });
+      // Not found — return only commentsCount: null
+      return res.status(200).json({ commentsCount: null });
     }
 
-    // Found: extract text and parent block
+    // Found: extract comments count from header text
     const headerText = headerEl.text().trim();
-    const headerOuter = $.html(headerEl.parent());
-    // Try to find broader block containing comments
-    let commentsBlock = headerEl.parent().closest('.comments, .card, .box, .comments-list');
-    if (!commentsBlock || commentsBlock.length === 0) commentsBlock = headerEl.parent();
-    const commentsHtml = $.html(commentsBlock);
-
-    // Return successful JSON
-    return res.status(200).json({
-      attempt,
-      status: fetched.status,
-      headerText,
-      headerOuter,
-      commentsHtml,
-      htmlPreview
-    });
+    let commentsCount = null;
+    const match = headerText.match(/التعليقات\s*\((\d+)\)/);
+    if (match && match[1]) {
+      commentsCount = parseInt(match[1], 10);
+    }
+    return res.status(200).json({ commentsCount });
 
   } catch (err) {
     console.error('Unexpected error', err);
