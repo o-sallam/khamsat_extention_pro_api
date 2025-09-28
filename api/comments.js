@@ -9,19 +9,11 @@ const cheerio = require('cheerio');
 const SCRAPING_SERVICES = {
   scrapingbee: {
     baseUrl: 'https://app.scrapingbee.com/api/v1/',
-    // For security, set SCRAPINGBEE_API_KEY in environment variables
-    // If not set, fallback to the provided key (not recommended for production)
     apiKey: process.env.SCRAPINGBEE_API_KEY || '3IIK67N8AYAM5ZKSJEE9ZHHKKIT26BVJZ6LJFGFEKJHZ5C1VAAG2955LNDIAO8453L3V7NRJMWGYFA0F',
     params: {
       render_js: 'true',
       premium_proxy: 'true',
-      country_code: 'sa', // Saudi Arabia for better Arabic content handling
-      wait: '5000', // Wait 5 seconds for dynamic content
-      wait_for: '.card-header', // Wait for comments section to load
-      block_resources: 'false', // Don't block any resources
-      custom_google: 'false', // Use regular proxies
-      stealth_proxy: 'true', // Use stealth mode
-      session_id: Math.random().toString(36).substring(7) // Random session
+      wait: '5000' // Keep it simple with just essential params
     }
   },
   scraperapi: {
@@ -43,55 +35,44 @@ const SCRAPING_SERVICES = {
 };
 
 async function scrapeWithServiceAlternative(targetUrl) {
-  // Alternative ScrapingBee settings for stubborn websites
+  // Simplified alternative settings
   const alternativeConfig = {
     baseUrl: 'https://app.scrapingbee.com/api/v1/',
     apiKey: process.env.SCRAPINGBEE_API_KEY || '3IIK67N8AYAM5ZKSJEE9ZHHKKIT26BVJZ6LJFGFEKJHZ5C1VAAG2955LNDIAO8453L3V7NRJMWGYFA0F',
     params: {
       render_js: 'true',
-      premium_proxy: 'true',
-      country_code: 'ae', // Try UAE instead
-      wait: '10000', // Wait 10 seconds
-      window_width: '1920',
-      window_height: '1080',
-      extract_rules: JSON.stringify({
-        'comments_section': '.card-header h3',
-        'full_page': 'body'
-      }),
-      custom_google: 'false',
-      stealth_proxy: 'true',
-      session_id: 'khamsat_' + Date.now()
+      wait: '8000' // Just wait longer
     }
   };
 
   const requestConfig = {
     params: alternativeConfig.params,
-    timeout: 90000, // 90 seconds timeout
+    timeout: 60000,
     headers: {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
   };
 
   try {
-    console.log('Trying alternative ScrapingBee configuration...');
+    console.log('Trying simplified ScrapingBee configuration...');
     const response = await axios.get(alternativeConfig.baseUrl, requestConfig);
     
     if (response.status === 200 && response.data) {
-      console.log(`Alternative ScrapingBee success. HTML length: ${response.data.length}`);
+      console.log(`Simplified ScrapingBee success. HTML length: ${response.data.length}`);
       return response.data;
     } else {
-      throw new Error(`Alternative ScrapingBee returned status ${response.status}`);
+      throw new Error(`Simplified ScrapingBee returned status ${response.status}`);
     }
   } catch (error) {
     if (error.response) {
-      console.error('Alternative ScrapingBee API error:', {
+      console.error('Simplified ScrapingBee API error:', {
         status: error.response.status,
         statusText: error.response.statusText,
         data: error.response.data
       });
-      throw new Error(`Alternative ScrapingBee API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+      throw new Error(`Simplified ScrapingBee API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
     } else {
-      throw new Error(`Alternative ScrapingBee request failed: ${error.message}`);
+      throw new Error(`Simplified ScrapingBee request failed: ${error.message}`);
     }
   }
 }
@@ -259,21 +240,56 @@ module.exports = async (req, res) => {
       }
     }
 
-    // Strategy 3: CSS selectors
+    // Strategy 3: CSS selectors بالترتيب الصحيح
     if (commentsCount === null) {
-      const headerEl = $('div.card-header.bg-white h3, div.card-header h3, h3').filter(function() {
+      // البحث المحدد: div.card-header.bg-white h3 بالضبط
+      let headerEl = $('div.card-header.bg-white h3').filter(function() {
         const text = $(this).text().trim();
         return text.includes('التعليقات') && text.match(/\(\d+\)/);
-      }).first();
+      });
+      
+      // إذا لم نجد، جرب بدون bg-white
+      if (headerEl.length === 0) {
+        headerEl = $('div.card-header h3').filter(function() {
+          const text = $(this).text().trim();
+          return text.includes('التعليقات') && text.match(/\(\d+\)/);
+        });
+      }
+      
+      // إذا لم نجد، جرب أي h3
+      if (headerEl.length === 0) {
+        headerEl = $('h3').filter(function() {
+          const text = $(this).text().trim();
+          return text.includes('التعليقات') && text.match(/\(\d+\)/);
+        });
+      }
 
       if (headerEl.length > 0) {
-        headerText = headerEl.text().trim();
-        selectorUsed = 'CSS selector';
+        headerText = headerEl.first().text().trim();
+        selectorUsed = 'CSS selector: ' + (headerEl.is('div.card-header.bg-white h3') ? 'div.card-header.bg-white h3' : 
+                                          headerEl.is('div.card-header h3') ? 'div.card-header h3' : 'h3');
         
         const match = headerText.match(/التعليقات\s*\((\d+)\)/);
         if (match && match[1]) {
           commentsCount = parseInt(match[1], 10);
         }
+        
+        // إضافة معلومات debug للعنصر الموجود
+        debugInfo.cssSelector = {
+          found: true,
+          elementTag: headerEl[0].tagName,
+          elementClasses: headerEl.attr('class'),
+          parentClasses: headerEl.parent().attr('class'),
+          fullText: headerText
+        };
+      } else {
+        debugInfo.cssSelector = {
+          found: false,
+          cardHeadersFound: $('div.card-header').length,
+          cardHeadersBgWhiteFound: $('div.card-header.bg-white').length,
+          h3ElementsFound: $('h3').length,
+          h3WithCommentsFound: $('h3:contains("التعليقات")').length
+        };
       }
     }
 
@@ -297,13 +313,29 @@ module.exports = async (req, res) => {
       }
     }
 
-    // Fallback: Count actual comment elements
+    // Fallback: Count actual comment elements (البحث عن عناصر التعليقات الفعلية)
     let actualCommentsCount = null;
-    const commentElements = $('.discussion-item.comment, .comment[data-id], [data-id^="973"]');
+    const commentElements = $('.discussion-item.comment, .comment[data-id], [data-commentable-id]');
     if (commentElements.length > 0) {
       actualCommentsCount = commentElements.length;
       debugInfo.actualCommentElements = commentElements.length;
+      
+      // إذا لم نجد العدد في الهيدر، استخدم العدد الفعلي
+      if (commentsCount === null && actualCommentsCount > 0) {
+        commentsCount = actualCommentsCount;
+        selectorUsed = 'counted actual comment elements';
+        headerText = `تم عد ${actualCommentsCount} تعليق`;
+      }
     }
+    
+    // معلومات إضافية للتصحيح
+    debugInfo.elementCounts = {
+      cardHeaders: $('div.card-header').length,
+      cardHeadersBgWhite: $('div.card-header.bg-white').length,
+      h3Elements: $('h3').length,
+      commentElements: commentElements.length,
+      commentsTextOccurrences: debugInfo.commentsTextPositions.length
+    };
 
     return res.status(200).json({
       commentsCount,
