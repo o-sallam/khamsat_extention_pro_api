@@ -13,7 +13,7 @@ const SCRAPING_SERVICES = {
     params: {
       render_js: 'true',
       premium_proxy: 'true',
-      wait: '3000',
+      wait: '500',
       block_resources: 'false', // ScrapingBee recommended this
       stealth_proxy: 'true'
     }
