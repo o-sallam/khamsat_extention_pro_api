@@ -22,11 +22,21 @@ module.exports = async (req, res) => {
   }
   const targetUrl = `https://khamsat.com/community/requests/${encodeURIComponent(param)}`;
   try {
-    const response = await axios.get(targetUrl, {
+    // Proxy support (set HTTP_PROXY or HTTPS_PROXY env vars if needed)
+    const axiosConfig = {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; Bot/1.0)'
       }
-    });
+    };
+    const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy;
+    const httpsProxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+    if (httpProxy || httpsProxy) {
+      // Use 'https-proxy-agent' for proxying axios requests
+      const HttpsProxyAgent = require('https-proxy-agent');
+      axiosConfig.httpsAgent = new HttpsProxyAgent(httpsProxy || httpProxy);
+      axiosConfig.proxy = false; // disable axios default proxy handling
+    }
+    const response = await axios.get(targetUrl, axiosConfig);
     const html = response.data;
     const $ = cheerio.load(html);
     // Find the comments section header
