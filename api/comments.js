@@ -51,7 +51,7 @@ async function scrapeWithServiceAlternative(targetUrl) {
 
   const requestConfig = {
     params: alternativeParams,
-    timeout: 60000,
+    timeout: 20000,
     headers: {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
