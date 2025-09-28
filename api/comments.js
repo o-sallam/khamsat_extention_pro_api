@@ -391,19 +391,7 @@ module.exports = async (req, res) => {
       commentsTextOccurrences: debugInfo.commentsTextPositions.length
     };
 
-    return res.status(200).json({
-      commentsCount,
-      actualCommentsCount,
-      targetUrl,
-      found: commentsCount !== null,
-      method: usedService,
-      selectorUsed,
-      headerText,
-      htmlLength: html.length,
-      debug: debugInfo,
-      success: true,
-      timestamp: new Date().toISOString()
-    });
+    return res.status(200).json({ commentsCount });
 
   } catch (error) {
     console.error('Scraping service error:', error);
