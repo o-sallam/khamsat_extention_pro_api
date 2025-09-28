@@ -13,7 +13,9 @@ const SCRAPING_SERVICES = {
     params: {
       render_js: 'true',
       premium_proxy: 'true',
-      wait: '5000' // Keep it simple with just essential params
+      wait: '3000',
+      block_resources: 'false', // ScrapingBee recommended this
+      stealth_proxy: 'true'
     }
   },
   scraperapi: {
@@ -33,6 +35,55 @@ const SCRAPING_SERVICES = {
     }
   }
 };
+
+async function scrapeWithServiceCustom(targetUrl, customParams) {
+  const config = SCRAPING_SERVICES.scrapingbee;
+  
+  const requestParams = {
+    api_key: config.apiKey,
+    url: targetUrl,
+    ...customParams
+  };
+
+  const requestConfig = {
+    params: requestParams,
+    timeout: 90000, // انتظار أطول
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+  };
+
+  try {
+    console.log('Custom ScrapingBee params:', customParams);
+    const response = await axios.get(config.baseUrl, requestConfig);
+    
+    if (response.status === 200 && response.data) {
+      return response.data;
+    } else {
+      throw new Error(`ScrapingBee returned status ${response.status}`);
+    }
+  } catch (error) {
+    if (error.response) {
+      const errorData = error.response.data;
+      console.error('ScrapingBee custom error:', {
+        status: error.response.status,
+        data: errorData
+      });
+      
+      // اقتراحات محددة بناءً على نوع الخطأ
+      let suggestion = '';
+      if (errorData && errorData.reason && errorData.reason.includes('508')) {
+        suggestion = 'Website returned 508 (timeout). Try with simpler parameters.';
+      } else if (errorData && errorData.reason && errorData.reason.includes('403')) {
+        suggestion = 'Website blocked the request. Try without premium_proxy.';
+      }
+      
+      throw new Error(`ScrapingBee API error: ${error.response.status} - ${JSON.stringify(errorData)} ${suggestion}`);
+    } else {
+      throw new Error(`ScrapingBee request failed: ${error.message}`);
+    }
+  }
+}
 
 async function scrapeWithServiceAlternative(targetUrl) {
   // Simplified alternative settings
