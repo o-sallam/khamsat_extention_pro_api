@@ -99,7 +99,7 @@ async function scrapeWithService(targetUrl, service = 'scrapingbee') {
 
   const requestConfig = {
     params: requestParams,
-    timeout: 2000,
+    timeout: 60000,
     headers: {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
