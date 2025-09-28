@@ -1,5 +1,6 @@
-// file: api/comments-scraping-service.js
-// Uses ScrapingBee, ScraperAPI, or similar services
+// file: /api/comments.js
+// Endpoint: /api/comments?param=YOUR_PARAM
+// Uses ScrapingBee to bypass AWS WAF protection
 
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -97,17 +98,19 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // Get param
-    let param = req.query.param;
-    if (!param && req.url) {
-      const urlMatch = req.url.match(/\/api\/comments-scraping-service\/?([^/?&]+)/);
-      if (urlMatch && urlMatch[1]) {
-        param = decodeURIComponent(urlMatch[1]);
-      }
-    }
+    // Get param from query string only (Vercel serverless style)
+    const param = req.query.param;
 
     if (!param) {
-      return res.status(400).json({ error: 'Missing param' });
+      return res.status(400).json({ 
+        error: 'Missing param',
+        usage: 'Use /api/comments?param=YOUR_PARAM_HERE',
+        example: '/api/comments?param=769858-%D8%B7%D9%84%D8%A8-%D9%85%D8%B5%D9%85%D9%85-%D9%84%D9%88%D9%82%D9%88'
+      });
+    }
+
+    if (typeof param !== 'string' || param.trim().length === 0) {
+      return res.status(400).json({ error: 'Invalid param format' });
     }
 
     const targetUrl = `https://khamsat.com/community/requests/${encodeURIComponent(param.trim())}`;
