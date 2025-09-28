@@ -149,17 +149,79 @@ module.exports = async (req, res) => {
     // Load HTML into cheerio for parsing
     const $ = cheerio.load(fetched.html);
     
-    // Look for the comments header element
-    const headerEl = $('div.card-header.bg-white h3').filter(function() {
+    // Debug: Add detailed HTML inspection
+    let debugInfo = {
+      htmlLength: fetched.html.length,
+      hasCardHeaders: $('div.card-header').length,
+      hasCardHeadersBgWhite: $('div.card-header.bg-white').length,
+      hasH3Elements: $('h3').length,
+      allH3Texts: [],
+      allCardHeaderTexts: [],
+      containsCommentsText: fetched.html.includes('التعليقات'),
+      containsCommentText: fetched.html.includes('تعليق'),
+      htmlSnippet: fetched.html.substring(0, 2000) // First 2000 chars for debugging
+    };
+
+    // Collect all h3 texts for debugging
+    $('h3').each(function() {
       const text = $(this).text().trim();
-      return text.includes('التعليقات') || text.includes('تعليق');
-    }).first();
+      if (text.length > 0) {
+        debugInfo.allH3Texts.push(text);
+      }
+    });
 
-    // Default response
+    // Collect all card-header texts
+    $('div.card-header').each(function() {
+      const text = $(this).text().trim();
+      if (text.length > 0) {
+        debugInfo.allCardHeaderTexts.push(text);
+      }
+    });
+
+    // Try multiple selector strategies with exact matching
+    let headerEl = $();
+    let selectorUsed = '';
     let commentsCount = null;
+    let headerText = '';
 
-    if (headerEl.length > 0) {
-      const headerText = headerEl.text().trim();
+    // Strategy 1: Exact original selector - div.card-header.bg-white h3
+    headerEl = $('div.card-header.bg-white h3').filter(function() {
+      const text = $(this).text().trim();
+      return text.includes('التعليقات');
+    });
+    if (headerEl.length > 0) selectorUsed = 'div.card-header.bg-white h3';
+
+    // Strategy 2: Just card-header (no bg-white requirement)
+    if (headerEl.length === 0) {
+      headerEl = $('div.card-header h3').filter(function() {
+        const text = $(this).text().trim();
+        return text.includes('التعليقات');
+      });
+      if (headerEl.length > 0) selectorUsed = 'div.card-header h3';
+    }
+
+    // Strategy 3: Any h3 element
+    if (headerEl.length === 0) {
+      headerEl = $('h3').filter(function() {
+        const text = $(this).text().trim();
+        return text.includes('التعليقات');
+      });
+      if (headerEl.length > 0) selectorUsed = 'h3';
+    }
+
+    // Strategy 4: Direct text search in HTML using regex
+    if (headerEl.length === 0) {
+      const textMatch = fetched.html.match(/التعليقات\s*\((\d+)\)/);
+      if (textMatch && textMatch[1]) {
+        commentsCount = parseInt(textMatch[1], 10);
+        selectorUsed = 'regex on raw HTML';
+        headerText = textMatch[0];
+      }
+    }
+
+    // If we found an element, extract the count
+    if (headerEl.length > 0 && commentsCount === null) {
+      headerText = headerEl.first().text().trim();
       console.log('Found header text:', headerText);
       
       // Try multiple regex patterns for Arabic comments
@@ -180,11 +242,22 @@ module.exports = async (req, res) => {
       }
     }
 
-    // Success response
+    // Alternative: Count actual comment elements as fallback
+    let actualCommentsCount = null;
+    const commentElements = $('.discussion-item.comment');
+    if (commentElements.length > 0) {
+      actualCommentsCount = commentElements.length;
+    }
+
+    // Success response with debug info
     return res.status(200).json({ 
       commentsCount,
+      actualCommentsCount, // Backup count from actual comment divs
       targetUrl,
-      found: headerEl.length > 0,
+      found: headerEl.length > 0 || commentsCount !== null,
+      selectorUsed,
+      headerText,
+      debug: debugInfo,
       timestamp: new Date().toISOString()
     });
 
