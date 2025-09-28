@@ -15,8 +15,13 @@ const SCRAPING_SERVICES = {
     params: {
       render_js: 'true',
       premium_proxy: 'true',
-      country_code: 'sa', // Changed to Saudi Arabia for better Arabic content handling
-      wait: '2000' // Wait 2 seconds for dynamic content
+      country_code: 'sa', // Saudi Arabia for better Arabic content handling
+      wait: '5000', // Wait 5 seconds for dynamic content
+      wait_for: '.card-header', // Wait for comments section to load
+      block_resources: 'false', // Don't block any resources
+      custom_google: 'false', // Use regular proxies
+      stealth_proxy: 'true', // Use stealth mode
+      session_id: Math.random().toString(36).substring(7) // Random session
     }
   },
   scraperapi: {
@@ -36,6 +41,60 @@ const SCRAPING_SERVICES = {
     }
   }
 };
+
+async function scrapeWithServiceAlternative(targetUrl) {
+  // Alternative ScrapingBee settings for stubborn websites
+  const alternativeConfig = {
+    baseUrl: 'https://app.scrapingbee.com/api/v1/',
+    apiKey: process.env.SCRAPINGBEE_API_KEY || '3IIK67N8AYAM5ZKSJEE9ZHHKKIT26BVJZ6LJFGFEKJHZ5C1VAAG2955LNDIAO8453L3V7NRJMWGYFA0F',
+    params: {
+      render_js: 'true',
+      premium_proxy: 'true',
+      country_code: 'ae', // Try UAE instead
+      wait: '10000', // Wait 10 seconds
+      window_width: '1920',
+      window_height: '1080',
+      extract_rules: JSON.stringify({
+        'comments_section': '.card-header h3',
+        'full_page': 'body'
+      }),
+      custom_google: 'false',
+      stealth_proxy: 'true',
+      session_id: 'khamsat_' + Date.now()
+    }
+  };
+
+  const requestConfig = {
+    params: alternativeConfig.params,
+    timeout: 90000, // 90 seconds timeout
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+  };
+
+  try {
+    console.log('Trying alternative ScrapingBee configuration...');
+    const response = await axios.get(alternativeConfig.baseUrl, requestConfig);
+    
+    if (response.status === 200 && response.data) {
+      console.log(`Alternative ScrapingBee success. HTML length: ${response.data.length}`);
+      return response.data;
+    } else {
+      throw new Error(`Alternative ScrapingBee returned status ${response.status}`);
+    }
+  } catch (error) {
+    if (error.response) {
+      console.error('Alternative ScrapingBee API error:', {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data
+      });
+      throw new Error(`Alternative ScrapingBee API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+    } else {
+      throw new Error(`Alternative ScrapingBee request failed: ${error.message}`);
+    }
+  }
+}
 
 async function scrapeWithService(targetUrl, service = 'scrapingbee') {
   const config = SCRAPING_SERVICES[service];
@@ -116,37 +175,43 @@ module.exports = async (req, res) => {
     const targetUrl = `https://khamsat.com/community/requests/${encodeURIComponent(param.trim())}`;
 
     // Try ScrapingBee first (since you have the API key)
-    const services = ['scrapingbee'];
     let html = null;
     let usedService = null;
     let lastError = null;
 
-    for (const service of services) {
-      try {
-        console.log(`Trying ${service} for URL: ${targetUrl}`);
-        html = await scrapeWithService(targetUrl, service);
-        
-        // Validate we got real content, not an error page
-        if (html && html.length > 5000 && !html.includes('awsWafCookieDomainList')) {
-          usedService = service;
-          break;
+    try {
+      console.log(`Trying ScrapingBee for URL: ${targetUrl}`);
+      html = await scrapeWithService(targetUrl, 'scrapingbee');
+      
+      // Check if we got real content
+      if (html && html.length > 50000) { // توقع على الأقل 50KB للصفحة الكاملة
+        console.log(`ScrapingBee success. HTML length: ${html.length}`);
+        usedService = 'scrapingbee';
+      } else {
+        console.log(`ScrapingBee returned small content: ${html ? html.length : 0} chars`);
+        // Try again with different settings
+        console.log('Retrying with different ScrapingBee settings...');
+        html = await scrapeWithServiceAlternative(targetUrl);
+        if (html && html.length > 50000) {
+          usedService = 'scrapingbee-alternative';
         } else {
-          throw new Error('Received invalid or incomplete content');
+          throw new Error(`Received incomplete content. HTML length: ${html ? html.length : 0}. Expected: >50KB`);
         }
-      } catch (error) {
-        console.error(`${service} failed:`, error.message);
-        lastError = error;
-        continue;
       }
+    } catch (error) {
+      console.error('ScrapingBee failed:', error.message);
+      lastError = error;
     }
 
-    if (!html) {
+    if (!html || html.length < 50000) { // توقع على الأقل 50KB للصفحة الكاملة
       return res.status(500).json({
-        error: 'ScrapingBee request failed',
-        message: 'Unable to fetch content using ScrapingBee',
-        lastError: lastError ? lastError.message : 'Unknown error',
+        error: 'ScrapingBee returned incomplete content',
+        message: 'The scraped content is too short, likely blocked or incomplete',
+        htmlLength: html ? html.length : 0,
+        expectedMinLength: 50000,
+        lastError: lastError ? lastError.message : 'Content too short',
         targetUrl,
-        suggestion: 'Check your ScrapingBee API key and account credits',
+        suggestion: 'The website might be detecting and blocking the scraper',
         timestamp: new Date().toISOString()
       });
     }
@@ -157,16 +222,44 @@ module.exports = async (req, res) => {
     let commentsCount = null;
     let selectorUsed = '';
     let headerText = '';
+    let debugInfo = {
+      htmlLength: html.length,
+      containsCommentsText: html.includes('التعليقات'),
+      commentsTextPositions: [] // مواضع كلمة التعليقات في النص
+    };
 
-    // Strategy 1: Direct regex search
-    const htmlRegexMatch = html.match(/التعليقات\s*\((\d+)\)/);
-    if (htmlRegexMatch && htmlRegexMatch[1]) {
-      commentsCount = parseInt(htmlRegexMatch[1], 10);
-      selectorUsed = 'regex on raw HTML';
-      headerText = htmlRegexMatch[0];
+    // البحث عن مواضع كلمة "التعليقات" في النص
+    let searchIndex = 0;
+    while ((searchIndex = html.indexOf('التعليقات', searchIndex)) !== -1) {
+      debugInfo.commentsTextPositions.push(searchIndex);
+      searchIndex += 'التعليقات'.length;
     }
 
-    // Strategy 2: CSS selectors
+    // Strategy 1: البحث المباشر في النص بـ regex في النطاق المتوقع
+    // البحث في النصف الثاني من الصفحة حيث عادة تكون التعليقات
+    const startSearchFrom = Math.max(0, Math.floor(html.length * 0.4)); // من 40% من بداية الصفحة
+    const searchRange = html.substring(startSearchFrom);
+    
+    const htmlRegexMatch = searchRange.match(/التعليقات\s*\((\d+)\)/);
+    if (htmlRegexMatch && htmlRegexMatch[1]) {
+      commentsCount = parseInt(htmlRegexMatch[1], 10);
+      selectorUsed = 'regex on HTML range (40%-100%)';
+      headerText = htmlRegexMatch[0];
+      debugInfo.foundAt = startSearchFrom + searchRange.indexOf(htmlRegexMatch[0]);
+    }
+
+    // Strategy 2: البحث في كامل النص إذا لم نجد في النطاق المحدد
+    if (commentsCount === null) {
+      const fullHtmlMatch = html.match(/التعليقات\s*\((\d+)\)/);
+      if (fullHtmlMatch && fullHtmlMatch[1]) {
+        commentsCount = parseInt(fullHtmlMatch[1], 10);
+        selectorUsed = 'regex on full HTML';
+        headerText = fullHtmlMatch[0];
+        debugInfo.foundAt = html.indexOf(fullHtmlMatch[0]);
+      }
+    }
+
+    // Strategy 3: CSS selectors
     if (commentsCount === null) {
       const headerEl = $('div.card-header.bg-white h3, div.card-header h3, h3').filter(function() {
         const text = $(this).text().trim();
@@ -184,11 +277,32 @@ module.exports = async (req, res) => {
       }
     }
 
+    // Strategy 4: البحث الأكثر مرونة بأنماط مختلفة
+    if (commentsCount === null && html.includes('التعليقات')) {
+      const patterns = [
+        /التعليقات[^\d]*(\d+)[^\d]/,
+        /(\d+)[^\d]*تعليق/,
+        /comment[^\d]*(\d+)/i,
+        /replies?[^\d]*(\d+)/i
+      ];
+      
+      for (const pattern of patterns) {
+        const match = searchRange.match(pattern) || html.match(pattern);
+        if (match && match[1] && parseInt(match[1]) > 0 && parseInt(match[1]) < 1000) { // تحقق من أن الرقم منطقي
+          commentsCount = parseInt(match[1], 10);
+          selectorUsed = `flexible pattern: ${pattern.toString()}`;
+          headerText = match[0];
+          break;
+        }
+      }
+    }
+
     // Fallback: Count actual comment elements
     let actualCommentsCount = null;
-    const commentElements = $('.discussion-item.comment');
+    const commentElements = $('.discussion-item.comment, .comment[data-id], [data-id^="973"]');
     if (commentElements.length > 0) {
       actualCommentsCount = commentElements.length;
+      debugInfo.actualCommentElements = commentElements.length;
     }
 
     return res.status(200).json({
@@ -196,10 +310,11 @@ module.exports = async (req, res) => {
       actualCommentsCount,
       targetUrl,
       found: commentsCount !== null,
-      method: 'scrapingbee',
+      method: usedService,
       selectorUsed,
       headerText,
       htmlLength: html.length,
+      debug: debugInfo,
       success: true,
       timestamp: new Date().toISOString()
     });
