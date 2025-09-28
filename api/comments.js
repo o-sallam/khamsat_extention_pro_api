@@ -25,7 +25,13 @@ module.exports = async (req, res) => {
     // Proxy support (set HTTP_PROXY or HTTPS_PROXY env vars if needed)
     const axiosConfig = {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Bot/1.0)'
+        // Full browser-like headers
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
+        'Referer': 'https://khamsat.com/',
+        // Optional: add a valid cookie string if needed
+        // 'Cookie': 'your_cookie_here'
       }
     };
     const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy;
