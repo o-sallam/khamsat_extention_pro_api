@@ -12,7 +12,7 @@ module.exports = async (req, res) => {
     if (matches && matches[1]) param = matches[1];
   }
   if (!param) {
-    return res.status(400).json({ error: 'Missing param' });
+    return res.status(400).json({ error: 'Missing param', param });
   }
   // Handle Arabic and URL encoding
   try {
@@ -44,7 +44,7 @@ module.exports = async (req, res) => {
     }
     const commentsHeaderDiv = commentsHeader.parent();
     if (commentsHeaderDiv.length === 0) {
-      return res.status(404).json({ error: 'Comments section not found' });
+      return res.status(404).json({ error: 'Comments section not found', param });
     }
     // Try to find the closest parent that contains the header and all comments (usually .comments or .card or .box or .comments-list)
     let commentsBlock = commentsHeaderDiv.closest('.comments, .card, .box, .comments-list');
@@ -60,6 +60,6 @@ module.exports = async (req, res) => {
       headerOuter: $.html(commentsHeaderDiv)
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch or parse comments', details: err.message });
+    res.status(500).json({ error: 'Failed to fetch or parse comments', details: err.message, param });
   }
 };
