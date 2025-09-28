@@ -10,23 +10,74 @@ async function fetchAndExtract(targetUrl, axiosConfig = {}) {
     const html = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
     return { status: resp.status, headers: resp.headers, html };
   } catch (error) {
-    // Re-throw with more context
     throw new Error(`Fetch failed: ${error.message}`);
   }
 }
 
+async function tryMultipleProxies(targetUrl, originalConfig) {
+  const proxies = [
+    // Proxy 1: AllOrigins
+    {
+      url: `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+      config: {
+        headers: originalConfig.headers,
+        timeout: 30000,
+      }
+    },
+    // Proxy 2: CORS Anywhere alternative
+    {
+      url: `https://cors-anywhere.herokuapp.com/${targetUrl}`,
+      config: {
+        headers: {
+          ...originalConfig.headers,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        timeout: 30000,
+      }
+    },
+    // Proxy 3: Another CORS proxy
+    {
+      url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+      config: {
+        headers: {
+          'User-Agent': originalConfig.headers['User-Agent'],
+        },
+        timeout: 30000,
+      }
+    }
+  ];
+
+  for (const proxy of proxies) {
+    try {
+      console.log(`Trying proxy: ${proxy.url.split('?')[0]}`);
+      const result = await fetchAndExtract(proxy.url, proxy.config);
+      
+      // Check if we got the actual content (not a challenge page)
+      if (result.html && 
+          result.html.length > 5000 && 
+          !result.html.includes('awsWafCookieDomainList') &&
+          !result.html.includes('challenge-container')) {
+        return result;
+      }
+    } catch (error) {
+      console.error(`Proxy failed: ${error.message}`);
+      continue;
+    }
+  }
+  
+  return null;
+}
+
 module.exports = async (req, res) => {
-  // Set CORS headers for cross-origin requests
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
-  // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // Only allow GET requests
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed. Use GET.' });
   }
@@ -35,13 +86,10 @@ module.exports = async (req, res) => {
     // Get param from query or from dynamic route
     let param = req.query.param;
     
-    // For dynamic routing: /api/comments/[param].js
     if (!param && req.query && Object.keys(req.query).length > 0) {
-      // In dynamic routing, the param will be in req.query.param
       param = req.query.param;
     }
     
-    // Fallback: parse from URL path
     if (!param && req.url) {
       const urlMatch = req.url.match(/\/api\/comments\/?([^/?&]+)/);
       if (urlMatch && urlMatch[1]) {
@@ -56,21 +104,18 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Validate param (basic sanitization)
     if (typeof param !== 'string' || param.trim().length === 0) {
       return res.status(400).json({ error: 'Invalid param format' });
     }
 
     param = param.trim();
-
-    // Build target URL
     const targetUrl = `https://khamsat.com/community/requests/${encodeURIComponent(param)}`;
 
-    // Enhanced axios config with better browser mimicking
+    // Enhanced browser-like config to avoid WAF detection
     const axiosConfig = {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/png,image/svg+xml,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
         'DNT': '1',
@@ -80,27 +125,37 @@ module.exports = async (req, res) => {
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',
+        // Add session-like headers
+        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
       },
-      timeout: 25000,
-      maxRedirects: 3,
+      timeout: 30000,
+      maxRedirects: 5,
       validateStatus: status => status >= 200 && status < 400,
-      // Handle compressed responses
       decompress: true,
     };
 
     let fetched = null;
     let lastError = null;
+    let method = '';
 
-    // Attempt 1: Direct fetch
+    // Attempt 1: Direct fetch with enhanced headers
     try {
-      console.log(`Attempting direct fetch: ${targetUrl}`);
+      console.log(`Direct fetch attempt: ${targetUrl}`);
       fetched = await fetchAndExtract(targetUrl, axiosConfig);
       
-      // Validate response
-      if (!fetched.html || fetched.html.length < 100) {
-        throw new Error('Response too short or empty');
+      // Check if we got AWS WAF challenge
+      if (fetched.html && (fetched.html.includes('awsWafCookieDomainList') || 
+                          fetched.html.includes('challenge-container') ||
+                          fetched.html.length < 5000)) {
+        console.log('AWS WAF challenge detected, trying proxies...');
+        fetched = null;
+      } else {
+        method = 'direct';
       }
       
     } catch (error) {
@@ -108,156 +163,79 @@ module.exports = async (req, res) => {
       lastError = error;
     }
 
-    // Attempt 2: Proxy fallback if direct fetch failed
-    if (!fetched || !fetched.html || fetched.html.length < 100) {
+    // Attempt 2: Try multiple proxy services
+    if (!fetched) {
       try {
-        console.log('Trying proxy fallback...');
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-        
-        const proxyConfig = {
-          headers: {
-            'User-Agent': axiosConfig.headers['User-Agent'],
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8',
-          },
-          timeout: 25000,
-          maxRedirects: 2,
-        };
-        
-        fetched = await fetchAndExtract(proxyUrl, proxyConfig);
-        
-        if (!fetched.html || fetched.html.length < 100) {
-          throw new Error('Proxy response too short or empty');
-        }
-        
+        fetched = await tryMultipleProxies(targetUrl, axiosConfig);
+        if (fetched) method = 'proxy';
       } catch (proxyError) {
-        console.error('Proxy fetch failed:', proxyError.message);
+        console.error('All proxies failed:', proxyError.message);
         lastError = proxyError;
       }
     }
 
-    // If both attempts failed
+    // If all attempts failed
     if (!fetched || !fetched.html) {
       return res.status(500).json({ 
-        error: 'Failed to fetch content from target URL',
+        error: 'Unable to bypass WAF protection',
+        message: 'The target website is protected by AWS WAF and all proxy attempts failed',
         targetUrl,
+        suggestion: 'Try using a browser automation service like Puppeteer or Playwright',
         lastError: lastError ? lastError.message : 'Unknown error',
         timestamp: new Date().toISOString()
       });
     }
 
-    // Load HTML into cheerio for parsing
+    // Parse the HTML
     const $ = cheerio.load(fetched.html);
     
-    // Debug: Add detailed HTML inspection
-    let debugInfo = {
-      htmlLength: fetched.html.length,
-      hasCardHeaders: $('div.card-header').length,
-      hasCardHeadersBgWhite: $('div.card-header.bg-white').length,
-      hasH3Elements: $('h3').length,
-      allH3Texts: [],
-      allCardHeaderTexts: [],
-      containsCommentsText: fetched.html.includes('التعليقات'),
-      containsCommentText: fetched.html.includes('تعليق'),
-      htmlSnippet: fetched.html.substring(0, 2000) // First 2000 chars for debugging
-    };
-
-    // Collect all h3 texts for debugging
-    $('h3').each(function() {
-      const text = $(this).text().trim();
-      if (text.length > 0) {
-        debugInfo.allH3Texts.push(text);
-      }
-    });
-
-    // Collect all card-header texts
-    $('div.card-header').each(function() {
-      const text = $(this).text().trim();
-      if (text.length > 0) {
-        debugInfo.allCardHeaderTexts.push(text);
-      }
-    });
-
-    // Try multiple selector strategies with exact matching
-    let headerEl = $();
-    let selectorUsed = '';
     let commentsCount = null;
+    let selectorUsed = '';
     let headerText = '';
 
-    // Strategy 1: Exact original selector - div.card-header.bg-white h3
-    headerEl = $('div.card-header.bg-white h3').filter(function() {
-      const text = $(this).text().trim();
-      return text.includes('التعليقات');
-    });
-    if (headerEl.length > 0) selectorUsed = 'div.card-header.bg-white h3';
+    // Strategy 1: Direct regex search on raw HTML
+    const htmlRegexMatch = fetched.html.match(/التعليقات\s*\((\d+)\)/);
+    if (htmlRegexMatch && htmlRegexMatch[1]) {
+      commentsCount = parseInt(htmlRegexMatch[1], 10);
+      selectorUsed = 'regex on raw HTML';
+      headerText = htmlRegexMatch[0];
+    }
 
-    // Strategy 2: Just card-header (no bg-white requirement)
-    if (headerEl.length === 0) {
-      headerEl = $('div.card-header h3').filter(function() {
+    // Strategy 2: CSS selectors
+    if (commentsCount === null) {
+      const headerEl = $('div.card-header.bg-white h3, div.card-header h3, h3').filter(function() {
         const text = $(this).text().trim();
-        return text.includes('التعليقات');
-      });
-      if (headerEl.length > 0) selectorUsed = 'div.card-header h3';
-    }
+        return text.includes('التعليقات') && text.match(/\(\d+\)/);
+      }).first();
 
-    // Strategy 3: Any h3 element
-    if (headerEl.length === 0) {
-      headerEl = $('h3').filter(function() {
-        const text = $(this).text().trim();
-        return text.includes('التعليقات');
-      });
-      if (headerEl.length > 0) selectorUsed = 'h3';
-    }
-
-    // Strategy 4: Direct text search in HTML using regex
-    if (headerEl.length === 0) {
-      const textMatch = fetched.html.match(/التعليقات\s*\((\d+)\)/);
-      if (textMatch && textMatch[1]) {
-        commentsCount = parseInt(textMatch[1], 10);
-        selectorUsed = 'regex on raw HTML';
-        headerText = textMatch[0];
-      }
-    }
-
-    // If we found an element, extract the count
-    if (headerEl.length > 0 && commentsCount === null) {
-      headerText = headerEl.first().text().trim();
-      console.log('Found header text:', headerText);
-      
-      // Try multiple regex patterns for Arabic comments
-      const patterns = [
-        /التعليقات\s*\((\d+)\)/,
-        /تعليق\s*\((\d+)\)/,
-        /التعليقات\s*:\s*(\d+)/,
-        /(\d+)\s*تعليق/,
-        /\((\d+)\)/
-      ];
-      
-      for (const pattern of patterns) {
-        const match = headerText.match(pattern);
+      if (headerEl.length > 0) {
+        headerText = headerEl.text().trim();
+        selectorUsed = 'CSS selector';
+        
+        const match = headerText.match(/التعليقات\s*\((\d+)\)/);
         if (match && match[1]) {
           commentsCount = parseInt(match[1], 10);
-          break;
         }
       }
     }
 
-    // Alternative: Count actual comment elements as fallback
+    // Fallback: Count actual comment elements
     let actualCommentsCount = null;
-    const commentElements = $('.discussion-item.comment');
+    const commentElements = $('.discussion-item.comment, .comment, [data-id^="973"]');
     if (commentElements.length > 0) {
       actualCommentsCount = commentElements.length;
     }
 
-    // Success response with debug info
+    // Success response
     return res.status(200).json({ 
       commentsCount,
-      actualCommentsCount, // Backup count from actual comment divs
+      actualCommentsCount,
       targetUrl,
-      found: headerEl.length > 0 || commentsCount !== null,
+      found: commentsCount !== null,
+      method,
       selectorUsed,
       headerText,
-      debug: debugInfo,
+      htmlLength: fetched.html.length,
       timestamp: new Date().toISOString()
     });
 
