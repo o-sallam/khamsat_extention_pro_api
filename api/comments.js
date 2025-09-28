@@ -36,17 +36,17 @@ const SCRAPING_SERVICES = {
 
 async function scrapeWithServiceAlternative(targetUrl) {
   // Simplified alternative settings
-  const alternativeConfig = {
-    baseUrl: 'https://app.scrapingbee.com/api/v1/',
-    apiKey: process.env.SCRAPINGBEE_API_KEY || '3IIK67N8AYAM5ZKSJEE9ZHHKKIT26BVJZ6LJFGFEKJHZ5C1VAAG2955LNDIAO8453L3V7NRJMWGYFA0F',
-    params: {
-      render_js: 'true',
-      wait: '8000' // Just wait longer
-    }
+  const config = SCRAPING_SERVICES.scrapingbee; // استخدم نفس الإعدادات الأساسية
+  
+  const alternativeParams = {
+    api_key: config.apiKey, // تأكد من إرسال API key
+    url: targetUrl,
+    render_js: 'true',
+    wait: '8000' // Just wait longer
   };
 
   const requestConfig = {
-    params: alternativeConfig.params,
+    params: alternativeParams,
     timeout: 60000,
     headers: {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -55,7 +55,8 @@ async function scrapeWithServiceAlternative(targetUrl) {
 
   try {
     console.log('Trying simplified ScrapingBee configuration...');
-    const response = await axios.get(alternativeConfig.baseUrl, requestConfig);
+    console.log('API Key present:', config.apiKey ? 'Yes' : 'No');
+    const response = await axios.get(config.baseUrl, requestConfig);
     
     if (response.status === 200 && response.data) {
       console.log(`Simplified ScrapingBee success. HTML length: ${response.data.length}`);
@@ -84,14 +85,16 @@ async function scrapeWithService(targetUrl, service = 'scrapingbee') {
   }
 
   console.log(`Using ScrapingBee to scrape: ${targetUrl}`);
+  console.log(`API Key present: ${config.apiKey ? 'Yes' : 'No'}`);
   
-  const requestUrl = config.baseUrl;
+  const requestParams = {
+    api_key: config.apiKey,
+    url: targetUrl,
+    ...config.params
+  };
+
   const requestConfig = {
-    params: {
-      api_key: config.apiKey,
-      url: targetUrl,
-      ...config.params
-    },
+    params: requestParams,
     timeout: 60000,
     headers: {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -99,7 +102,7 @@ async function scrapeWithService(targetUrl, service = 'scrapingbee') {
   };
 
   try {
-    const response = await axios.get(requestUrl, requestConfig);
+    const response = await axios.get(config.baseUrl, requestConfig);
     
     // Check if we got a successful response
     if (response.status === 200 && response.data) {
